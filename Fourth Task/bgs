@@ -1,0 +1,937 @@
+.include "constants.inc"
+.include "header.inc"
+
+.segment "ZEROPAGE"
+player_x: .res 1
+player_y: .res 1
+collision_x: .res 1
+player_dir: .res 1
+scroll: .res 1
+ppuctrl_settings: .res 1
+pad1: .res 1
+player_left_frame_counter: .res 1
+player_right_frame_counter: .res 1
+player_down_frame_counter: .res 1
+player_up_frame_counter: .res 1
+tmp: .res 1
+currname: .res 1
+secondat: .res 1
+.exportzp player_x, player_y, pad1
+
+.segment "CODE"
+.proc irq_handler
+  RTI
+.endproc
+
+.import read_controller1
+
+.proc nmi_handler
+  LDA #$00
+  STA OAMADDR
+  LDA #$02
+  STA OAMDMA
+	LDA #$00
+
+
+  JSR read_controller1
+  ; JSR draw_player
+
+  LDA scroll
+  CMP #255
+  BNE set_scroll_pos
+  LDA ppuctrl_settings
+  EOR #%00000010
+  STA ppuctrl_settings
+  STA PPUCTRL
+  JMP done
+
+set_scroll_pos:
+LDA scroll
+STA PPUSCROLL
+INC scroll
+LDA #00
+STA PPUSCROLL
+
+done:
+  RTI
+.endproc
+
+.import reset_handler
+.import load_background
+.import load_background2
+
+.proc vblankwait       ; wait for another vblank before continuing
+  BIT PPUSTATUS
+  BPL vblankwait
+
+  LDA #%10010000  ; turn on NMIs, sprites use first pattern table
+	STA ppuctrl_settings
+  STA PPUCTRL
+  LDA #%00011110  ; turn on screen
+  STA PPUMASK
+  RTS
+.endproc
+
+.export main
+.proc main
+	LDA #00	 ; Y is only 240 lines tall!
+	STA scroll
+
+LDA #00
+STA collision_x
+LDA #00
+STA currname
+LDA #$00
+STA player_left_frame_counter
+LDA #$00
+STA player_right_frame_counter
+LDA #$00
+STA player_down_frame_counter
+LDA #$00
+STA player_up_frame_counter
+
+JSR load_background
+
+  ; write a palette
+  LDX PPUSTATUS
+  LDX #$3f
+  STX PPUADDR
+  LDX #$00
+  STX PPUADDR
+load_palettes:
+  LDA palettes,X
+  STA PPUDATA
+  INX
+  CPX #$20
+  BNE load_palettes
+
+
+vblankwait:       ; wait for another vblank before continuing
+  BIT PPUSTATUS
+  BPL vblankwait
+
+  LDA #%10010000  ; turn on NMIs, sprites use first pattern table
+	STA ppuctrl_settings
+  STA PPUCTRL
+  LDA #%00011110  ; turn on screen
+  STA PPUMASK
+
+  LDA secondat
+  CMP #$01
+  BEQ LoadAttribute3
+
+LoadAttribute:
+  LDA $2002             ; read PPU status to reset the high/low latch
+  LDA #$23
+  STA $2006             ; write the high byte of $23C0 address
+  LDA #$C0
+  STA $2006             ; write the low byte of $23C0 address
+  LDX #$00              ; start out at 0
+LoadAttributeLoop:
+  LDA attribute, x      ; load data from address (attribute + the value in x)
+  STA $2007             ; write to PPU
+  INX                   ; X = X + 1
+  CPX #$38              ; Compare X to hex $08, decimal 8 - copying 8 bytes
+  BNE LoadAttributeLoop
+
+LoadAttribute2:
+  LDA $2402             ; read PPU status to reset the high/low latch
+  LDA #$27
+  STA $2406             ; write the high byte of $23C0 address
+  LDA #$C0
+  STA $2406             ; write the low byte of $23C0 address
+  LDX #$00              ; start out at 0
+LoadAttributeLoop2:
+  LDA attribute2, x      ; load data from address (attribute + the value in x)
+  STA $2407             ; write to PPU
+  INX                   ; X = X + 1
+  CPX #$38              ; Compare X to hex $08, decimal 8 - copying 8 bytes
+  BNE LoadAttributeLoop2
+  JMP justgo
+
+LoadAttribute3:
+  LDA $2002             ; read PPU status to reset the high/low latch
+  LDA #$23
+  STA $2006             ; write the high byte of $23C0 address
+  LDA #$C0
+  STA $2006             ; write the low byte of $23C0 address
+  LDX #$00              ; start out at 0
+LoadAttribute3Loop:
+  LDA attribute3, x      ; load data from address (attribute + the value in x)
+  STA $2007             ; write to PPU
+  INX                   ; X = X + 1
+  CPX #$38            ; Compare X to hex $08, decimal 8 - copying 8 bytes
+  BNE LoadAttribute3Loop
+
+LoadAttribute4:
+  LDA $2402             ; read PPU status to reset the high/low latch
+  LDA #$27
+  STA $2406             ; write the high byte of $23C0 address
+  LDA #$C0
+  STA $2406             ; write the low byte of $23C0 address
+  LDX #$00              ; start out at 0
+LoadAttributeLoop4:
+  LDA attribute4, x      ; load data from address (attribute + the value in x)
+  STA $2407             ; write to PPU
+  INX                   ; X = X + 1
+  CPX #$38              ; Compare X to hex $08, decimal 8 - copying 8 bytes
+  BNE LoadAttributeLoop4 
+
+justgo:
+  LDA #%10010000   ; enable NMI, sprites from Pattern Table 0, background from Pattern Table 1
+  STA $2000
+
+  LDA #%00011110   ; enable sprites, enable background, no clipping on left side
+  STA $2001
+
+
+checkA:
+  LDA pad1        ; Load button presses
+  AND #BTN_B   ; Filter out all but A
+  BEQ checkA
+  LDA #$00
+  STA PPUCTRL
+  STA PPUMASK
+  LDA #%10001000
+  STA PPUCTRL
+  LDA #00
+  STA scroll
+  LDA #$01
+  STA secondat
+  BEQ LoadAttribute3
+  JSR load_background2
+  JMP vblankwait
+
+forever:
+  JMP forever
+  
+.endproc
+
+.proc draw_player
+  ; save registers
+  PHP
+  PHA
+  TXA
+  PHA
+  TYA
+  PHA
+
+
+
+check_left:
+  LDA pad1        ; Load button presses
+  AND #BTN_LEFT   ; Filter out all but Left
+  BEQ check_right ; If result is zero, left not pressed
+  DEC player_x
+  DEC collision_x
+  LDX collision_x
+  LDA player_y
+  CLC
+  ADC #$01
+  TAY
+  JSR CheckCollide
+  BEQ NoCollisionUp0
+  INC player_x
+  INC collision_x
+  JMP check_right
+NoCollisionUp0:
+  LDX collision_x
+  LDA player_y  ; If the branch is not taken, move player left
+  CLC
+  ADC #$10
+  TAY
+  JSR CheckCollide
+  BEQ NoCollisionDown0
+  INC player_x
+  INC collision_x
+  JMP check_right
+NoCollisionDown0:
+  JMP draw_left
+
+check_right:
+  LDA pad1
+  AND #BTN_RIGHT
+  BEQ check_up 
+  INC player_x
+  INC collision_x
+  LDA collision_x
+  CLC
+  ADC #$0F
+  TAX
+  LDA player_y
+  CLC
+  ADC #$01
+  TAY
+  JSR CheckCollide
+  BEQ NoCollisionUp
+  DEC player_x
+  DEC collision_x
+  JMP check_up
+NoCollisionUp:
+  LDA collision_x
+  CLC
+  ADC #$0F
+  TAX
+  LDA player_y
+  CLC
+  ADC #$10
+  TAY
+  JSR CheckCollide
+  BEQ NoCollisionDown
+  DEC player_x
+  DEC collision_x
+  JMP check_up
+NoCollisionDown:
+  JMP draw_right
+
+check_up:
+  LDA pad1
+  AND #BTN_UP
+  BEQ check_down
+  DEC player_y
+  LDA collision_x
+  CLC
+  ADC #$03
+  TAX
+  LDA player_y
+  CLC
+  ADC #$01
+  TAY
+  JSR CheckCollide
+  BEQ NoCollisionLeft1
+  INC player_y
+NoCollisionLeft1:
+  LDA collision_x
+  CLC 
+  ADC #$0D
+  TAX
+  LDA player_y
+  CLC
+  ADC #$01
+  TAY
+  JSR CheckCollide
+  BEQ NoCollisionRight1
+  INC player_y
+NoCollisionRight1:
+  JMP draw_up
+
+check_down:
+  LDA pad1
+  AND #BTN_DOWN
+  BEQ done_checking
+  INC player_y
+  LDA collision_x
+  CLC 
+  ADC #$03
+  TAX
+  LDA player_y
+  CLC
+  ADC #$10
+  TAY
+  JSR CheckCollide
+  BEQ NoCollisionLeft0
+  DEC player_y
+NoCollisionLeft0:
+  LDA collision_x
+  CLC 
+  ADC #$0D
+  TAX
+  LDA player_y
+  CLC
+  ADC #$10
+  TAY
+  JSR CheckCollide
+  BEQ NoCollisionRight0
+  DEC player_y
+NoCollisionRight0:
+  JMP draw_down
+
+done_checking:
+    LDA #$24
+    STA $0201
+    LDA #$25
+    STA $0205
+    LDA #$34
+    STA $0209
+    LDA #$35
+    STA $020d
+    JMP done_draw
+
+CheckCollide:
+    TXA
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    LSR
+    STA tmp
+    TYA 
+    LSR
+    LSR
+    LSR
+    LSR
+    ASL
+    ASL
+    CLC
+    ADC tmp
+    TAY
+
+    TXA
+    LSR
+    LSR
+    LSR
+    AND #%0111
+    TAX
+
+    LDA scroll
+    CMP #160
+    BEQ secondtable
+    LDA currname
+    CMP #01
+    BEQ secondtable
+    LDA collisionmap, Y
+    AND bitmask, X
+    JMP endit
+    secondtable: 
+    LDA #01
+    STA currname
+    LDA collisionmap1, Y
+    AND bitmask, X
+    endit:
+    RTS
+
+ draw_left:
+    LDA scroll
+    CMP #00
+    BEQ justdrawleft
+    DEC scroll
+    DEC scroll
+    DEC collision_x
+    DEC collision_x
+
+  justdrawleft:
+    LDA player_left_frame_counter
+    CMP #$00
+    BEQ set_left_frame_1
+    CMP #$01
+    BEQ set_left_frame_1
+    CMP #$02
+    BEQ set_left_frame_1
+    CMP #$03
+    BEQ set_left_frame_1
+    CMP #$04
+    BEQ set_left_frame_1
+    CMP #$05
+    BEQ set_left_frame_1
+    CMP #$06
+    BEQ set_left_frame_2
+    CMP #$07
+    BEQ set_left_frame_2
+    CMP #$08
+    BEQ set_left_frame_2
+    CMP #$09
+    BEQ set_left_frame_2    
+    CMP #$0A
+    BEQ set_left_frame_2
+    CMP #$0B
+    BEQ set_left_frame_2
+    CMP #$0C
+    BEQ set_left_frame_1
+    CMP #$0D
+    BEQ set_left_frame_1
+    CMP #$0E
+    BEQ set_left_frame_1
+    CMP #$0F
+    BEQ set_left_frame_1
+    CMP #$10
+    BEQ set_left_frame_1
+    CMP #$11
+    BEQ set_left_frame_1
+    CMP #$12
+    BEQ set_left_frame_3    
+    CMP #$13
+    BEQ set_left_frame_3
+    CMP #$14
+    BEQ set_left_frame_3
+    CMP #$15
+    BEQ set_left_frame_3
+    CMP #$16
+    BEQ set_left_frame_3
+    CMP #$17
+    BEQ set_left_frame_3
+
+    ; If counter is not 0, 1, or 2, reset to 0
+    LDA #$00
+    STA player_left_frame_counter
+    JMP done_draw
+
+    set_left_frame_1:
+      LDA #$0C
+      STA $0201
+      LDA #$0D
+      STA $0205
+      LDA #$1C
+      STA $0209
+      LDA #$1D
+      STA $020D
+      JMP done_draw
+
+    set_left_frame_2:
+      LDA #$08
+      STA $0201
+      LDA #$09
+      STA $0205
+      LDA #$18
+      STA $0209
+      LDA #$19
+      STA $020D
+      JMP done_draw
+
+    set_left_frame_3:
+      LDA #$0A
+      STA $0201
+      LDA #$0B
+      STA $0205
+      LDA #$1A
+      STA $0209
+      LDA #$1B
+      STA $020D
+      JMP done_draw
+
+ draw_right:
+    LDA scroll
+    CMP #254
+    BEQ justdrawright
+    INC scroll
+    INC scroll
+    INC collision_x
+    INC collision_x
+  justdrawright:
+    LDA player_right_frame_counter
+    CMP #$00
+    BEQ set_right_frame_1
+    CMP #$01
+    BEQ set_right_frame_1
+    CMP #$02
+    BEQ set_right_frame_1
+    CMP #$03
+    BEQ set_right_frame_1
+    CMP #$04
+    BEQ set_right_frame_1
+    CMP #$05
+    BEQ set_right_frame_1
+    CMP #$06
+    BEQ set_right_frame_2
+    CMP #$07
+    BEQ set_right_frame_2
+    CMP #$08
+    BEQ set_right_frame_2
+    CMP #$09
+    BEQ set_right_frame_2    
+    CMP #$0A
+    BEQ set_right_frame_2
+    CMP #$0B
+    BEQ set_right_frame_2
+    CMP #$0C
+    BEQ set_right_frame_1
+    CMP #$0D
+    BEQ set_right_frame_1
+    CMP #$0E
+    BEQ set_right_frame_1
+    CMP #$0F
+    BEQ set_right_frame_1
+    CMP #$10
+    BEQ set_right_frame_1
+    CMP #$11
+    BEQ set_right_frame_1
+    CMP #$12
+    BEQ set_right_frame_3    
+    CMP #$13
+    BEQ set_right_frame_3
+    CMP #$14
+    BEQ set_right_frame_3
+    CMP #$15
+    BEQ set_right_frame_3
+    CMP #$16
+    BEQ set_right_frame_3
+    CMP #$17
+    BEQ set_right_frame_3
+
+    LDA #$00
+    STA player_right_frame_counter
+
+    set_right_frame_1:
+      LDA #$22
+      STA $0201
+      LDA #$23
+      STA $0205
+      LDA #$32
+      STA $0209
+      LDA #$33
+      STA $020D
+      JMP done_draw
+
+    set_right_frame_2:
+      LDA #$0E
+      STA $0201
+      LDA #$0F
+      STA $0205
+      LDA #$1E
+      STA $0209
+      LDA #$1F
+      STA $020D
+      JMP done_draw
+
+    set_right_frame_3:
+      LDA #$20
+      STA $0201
+      LDA #$21
+      STA $0205
+      LDA #$30
+      STA $0209
+      LDA #$31
+      STA $020D
+      JMP done_draw
+
+ draw_down:
+    LDA player_down_frame_counter
+    CMP #$00
+    BEQ set_down_frame_1
+    CMP #$01
+    BEQ set_down_frame_1
+    CMP #$02
+    BEQ set_down_frame_1
+    CMP #$03
+    BEQ set_down_frame_1
+    CMP #$04
+    BEQ set_down_frame_1
+    CMP #$05
+    BEQ set_down_frame_1
+    CMP #$06
+    BEQ set_down_frame_2
+    CMP #$07
+    BEQ set_down_frame_2
+    CMP #$08
+    BEQ set_down_frame_2
+    CMP #$09
+    BEQ set_down_frame_2    
+    CMP #$0A
+    BEQ set_down_frame_2
+    CMP #$0B
+    BEQ set_down_frame_2
+    CMP #$0C
+    BEQ set_down_frame_1
+    CMP #$0D
+    BEQ set_down_frame_1
+    CMP #$0E
+    BEQ set_down_frame_1
+    CMP #$0F
+    BEQ set_down_frame_1
+    CMP #$10
+    BEQ set_down_frame_1
+    CMP #$11
+    BEQ set_down_frame_1
+    CMP #$12
+    BEQ set_down_frame_3    
+    CMP #$13
+    BEQ set_down_frame_3
+    CMP #$14
+    BEQ set_down_frame_3
+    CMP #$15
+    BEQ set_down_frame_3
+    CMP #$16
+    BEQ set_down_frame_3
+    CMP #$17
+    BEQ set_down_frame_3
+
+    ; If counter is not 0, 1, or 2, reset to 0
+    LDA #$00
+    STA player_down_frame_counter
+
+    set_down_frame_1:
+      LDA #$24
+      STA $0201
+      LDA #$25
+      STA $0205
+      LDA #$34
+      STA $0209
+      LDA #$35
+      STA $020D
+      JMP done_draw
+
+    set_down_frame_2:
+      LDA #$26
+      STA $0201
+      LDA #$27
+      STA $0205
+      LDA #$36
+      STA $0209
+      LDA #$37
+      STA $020D
+      JMP done_draw
+
+    set_down_frame_3:
+      LDA #$28
+      STA $0201
+      LDA #$29
+      STA $0205
+      LDA #$38
+      STA $0209
+      LDA #$39
+      STA $020D
+      JMP done_draw
+
+ draw_up:
+    LDA player_up_frame_counter
+    CMP #$00
+    BEQ set_up_frame_1
+    CMP #$01
+    BEQ set_up_frame_1
+    CMP #$02
+    BEQ set_up_frame_1
+    CMP #$03
+    BEQ set_up_frame_1
+    CMP #$04
+    BEQ set_up_frame_1
+    CMP #$05
+    BEQ set_up_frame_1
+    CMP #$06
+    BEQ set_up_frame_2
+    CMP #$07
+    BEQ set_up_frame_2
+    CMP #$08
+    BEQ set_up_frame_2
+    CMP #$09
+    BEQ set_up_frame_2    
+    CMP #$0A
+    BEQ set_up_frame_2
+    CMP #$0B
+    BEQ set_up_frame_2
+    CMP #$0C
+    BEQ set_up_frame_1
+    CMP #$0D
+    BEQ set_up_frame_1
+    CMP #$0E
+    BEQ set_up_frame_1
+    CMP #$0F
+    BEQ set_up_frame_1
+    CMP #$10
+    BEQ set_up_frame_1
+    CMP #$11
+    BEQ set_up_frame_1
+    CMP #$12
+    BEQ set_up_frame_3    
+    CMP #$13
+    BEQ set_up_frame_3
+    CMP #$14
+    BEQ set_up_frame_3
+    CMP #$15
+    BEQ set_up_frame_3
+    CMP #$16
+    BEQ set_up_frame_3
+    CMP #$17
+    BEQ set_up_frame_3
+
+    ; If counter is not 0, 1, or 2, reset to 0
+    LDA #$00
+    STA player_up_frame_counter
+
+    set_up_frame_1:
+      LDA #$2A
+      STA $0201
+      LDA #$2B
+      STA $0205
+      LDA #$3A
+      STA $0209
+      LDA #$3B
+      STA $020D
+      JMP done_draw
+
+    set_up_frame_2:
+      LDA #$2E
+      STA $0201
+      LDA #$2F
+      STA $0205
+      LDA #$3E
+      STA $0209
+      LDA #$3F
+      STA $020D
+      JMP done_draw
+
+    set_up_frame_3:
+      LDA #$2C
+      STA $0201
+      LDA #$2D
+      STA $0205
+      LDA #$3C
+      STA $0209
+      LDA #$3D
+      STA $020D
+      JMP done_draw
+
+
+  done_draw:
+
+	LDA scroll ; then Y scroll ; X scroll first
+	STA PPUSCROLL
+  LDA #00
+	STA PPUSCROLL
+  
+
+  ; store tile locations
+  ; top left tile:
+  LDA player_y
+  STA $0200
+  LDA player_x
+  STA $0203
+
+  ; top right tile (x + 8):
+  LDA player_y
+  STA $0204
+  LDA player_x
+  CLC
+  ADC #$08
+  STA $0207
+
+  ; bottom left tile (y + 8):
+  LDA player_y
+  CLC
+  ADC #$08
+  STA $0208
+  LDA player_x
+  STA $020b
+
+  ; bottom right tile (x + 8, y + 8)
+  LDA player_y
+  CLC
+  ADC #$08
+  STA $020c
+  LDA player_x
+  CLC
+  ADC #$08
+  STA $020f
+
+
+  INC player_left_frame_counter
+  INC player_right_frame_counter
+  INC player_down_frame_counter
+  INC player_up_frame_counter
+
+  LDA #%00100000
+  STA $0202
+  STA $0206
+  STA $020a
+  STA $020e
+  ; restore registers and return
+  PLA
+  TAY
+  PLA
+  TAX
+  PLA
+  PLP
+  RTS
+.endproc
+
+.segment "VECTORS"
+.addr nmi_handler, reset_handler, irq_handler
+
+.segment "RODATA"
+palettes:
+  ; Background Palette
+  .byte $35, $05, $0f, $31 ;limits
+  .byte $35, $05, $15, $19 ;bricks
+  .byte $35, $19, $29, $04 ;bushes
+  .byte $35, $00, $10, $20
+
+  ; Sprite Palette
+  .byte $35, $16, $36, $04
+  .byte $35, $00, $00, $00
+  .byte $35, $00, $00, $00
+  .byte $35, $00, $00, $00
+
+
+  
+attribute:
+  .byte %00000000, %00000000, %00000000, %00000000, %01010000, %01010000, %01010000, %01010000
+  .byte %00000000, %00010001, %01010101, %01010101, %10011001, %10010101, %01010101, %10011001
+  .byte %01000100, %00010001, %01010101, %10101001, %10100101, %10101001, %10100101, %10101001
+  .byte %01000100, %01100101, %01010101, %01010101, %10011001, %01010101, %01010101, %01100110
+  .byte %10000100, %10100110, %01010101, %01010101, %01010101, %01010101, %01010101, %01010101
+  .byte %00000000, %01010101, %01010101, %01010101, %01010101, %01010101, %01010101, %01010101
+  .byte %00000100, %01010101, %01010101, %01010101, %01010101, %01010101, %01010101, %01010101
+
+attribute2:
+  .byte %01010000, %01010000, %01010000, %01010000, %01010000, %01010000, %01010000, %01010000
+  .byte %00000000, %00010001, %01010101, %01010101, %10011001, %10010101, %01010101, %00010010
+  .byte %01000100, %00010001, %01010101, %10101001, %10100101, %10101001, %10100101, %00100001
+  .byte %01000100, %01100101, %01010101, %01010101, %10011001, %01010101, %01010101, %00100010
+  .byte %10000100, %10100110, %01010101, %01010101, %01010101, %01010101, %01010101, %00100010
+  .byte %00000000, %01010101, %01010101, %01010101, %01010101, %01010101, %01010101, %00100010
+  .byte %01000100, %01010101, %01010101, %01010101, %01010101, %01010101, %01010101, %00100010
+
+attribute3:
+  .byte %10101111, %11111010, %10101111, %11111010, %10101111, %00001010, %00001010, %00001010
+  .byte %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010
+  .byte %10101010, %10101010, %10101010, %10101010, %11111111, %11111111, %10101010, %10101010
+  .byte %10101010, %01010101, %10101010, %10101010, %11111111, %11111111, %01010101, %10101010
+  .byte %10101010, %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010
+  .byte %10101010, %01010101, %10101010, %10101010, %11111111, %11111111, %10101010, %10101010
+  .byte %10101010, %10101010, %10101010, %10101010, %11111111, %11111111, %10101010, %10101010
+
+attribute4:
+  .byte %10101111, %11111010, %10101111, %11111010, %10101111, %00001010, %00001010, %00001010
+  .byte %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010
+  .byte %10101010, %10101010, %10101010, %10101010, %11111111, %11111111, %10101010, %10101010
+  .byte %10101010, %01010101, %10101010, %10101010, %11111111, %11111111, %01010101, %10101010
+  .byte %10101010, %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010
+  .byte %10101010, %01010101, %10101010, %10101010, %11111111, %11111111, %10101010, %10101010
+  .byte %00000000, %00000000, %00000000, %00000000, %00000000, %00000000, %00000000, %00000000
+
+
+collisionmap:
+  .byte %11111111, %11111111, %11111111, %11111111
+  .byte %11000000, %00000000, %00001111, %11111111
+  .byte %11001100, %11111100, %11001100, %00001100
+  .byte %11001100, %11001100, %11001100, %11001100
+  .byte %11111100, %11001100, %11111100, %11111100
+  .byte %11110000, %11000000, %00000000, %00000000
+  .byte %11110011, %11001111, %11001111, %11110011
+  .byte %11110011, %00001100, %11001100, %00110011
+  .byte %11110011, %11111100, %11111100, %00110011
+  .byte %11000000, %00001100, %00000000, %00110011
+  .byte %11001111, %11001100, %00111111, %00110011
+  .byte %11001100, %00001100, %00110000, %00110011
+  .byte %11111111, %11001111, %11110000, %00000011
+  .byte %10000000, %00000000, %00000000, %11111111
+  .byte %11111111, %11111111, %11111111, %11111111
+
+collisionmap1:
+  .byte %11111111, %11111111, %11111111, %11111111
+  .byte %11111111, %11111111, %11111111, %11110001
+  .byte %00001100, %11111100, %11001100, %00000011
+  .byte %00001100, %11001100, %11001100, %11001111
+  .byte %00111100, %11001100, %11111100, %11111111
+  .byte %00110000, %11000000, %00000000, %00000011
+  .byte %00110011, %11001111, %11001111, %11110011
+  .byte %00110011, %00000000, %11001100, %00110011
+  .byte %00110011, %11111100, %11111100, %00110011
+  .byte %00000000, %00001100, %00000000, %00110011
+  .byte %00001111, %11001100, %00111111, %00110011
+  .byte %00001100, %00000000, %00110000, %00110011
+  .byte %00111111, %11001111, %11110000, %00000011
+  .byte %00111111, %11001111, %11110000, %00000011
+  .byte %11111111, %11111111, %11111111, %11111111
+
+bitmask:
+  .byte %10000000
+  .byte %01000000
+  .byte %00100000
+  .byte %00010000
+  .byte %00001000
+  .byte %00000100
+  .byte %00000010
+  .byte %00000001
+
+.segment "CHR"
+.incbin "Tileset.chr"
